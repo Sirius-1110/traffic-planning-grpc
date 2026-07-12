@@ -1,0 +1,20 @@
+[Unit]
+Description=TNA AI Status Diagnosis HTTP Service
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/giss/opt_algorithms/tna_ai_diagnosis
+Environment=TNA_AI_APP_ROOT=/home/giss/opt_algorithms/tna_ai_diagnosis
+Environment=TNA_DB_CONF=/home/giss/opt_algorithms/db.conf
+Environment=TNA_AI_CONFIG_JSON=/home/giss/opt_algorithms/tna_ai_diagnosis/secrets/ai.local.json
+Environment=TNA_AI_REPORT_DIR=/home/giss/opt_algorithms/tna_ai_diagnosis/reports
+Environment=TNA_AI_SERVICE_HOST=127.0.0.1
+Environment=TNA_AI_SERVICE_PORT=18080
+ExecStart=/home/giss/opt_algorithms/tna_ai_diagnosis/deploy/ai_diagnosis_service/start.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

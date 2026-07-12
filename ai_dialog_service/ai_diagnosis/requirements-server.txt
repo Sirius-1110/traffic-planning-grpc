@@ -1,0 +1,5 @@
+# 服务器 HTTP 服务依赖（不含 Cursor MCP）
+psycopg2-binary>=2.9
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.0
