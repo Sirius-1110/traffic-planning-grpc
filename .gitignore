@@ -1,0 +1,30 @@
+# Secrets and local configuration
+secrets/
+*.local.json
+db.conf
+.env
+.env.*
+
+# Generated/runtime content
+build/
+logs/
+output/
+*.log
+*.pid
+*.pyc
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+venv/
+.venv/
+node_modules/
+
+# Compiled artifacts and backups
+*.o
+*.so
+*.a
+*.bin
+*.bak*
+tna_grpc_server
+
