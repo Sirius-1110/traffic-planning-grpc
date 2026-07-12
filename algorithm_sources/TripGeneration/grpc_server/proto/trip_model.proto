@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package func;
+
+option cc_enable_arenas = true;
+
+service FuncService {
+    // 同步调用（async=0）：等待算法完成后返回结果
+    rpc trip_generation (ParamsData) returns (ResultData) {}
+    // 流式调用（async=1）：实时推送进度，最后一帧 done=1 携带结果
+    rpc trip_generation_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 同步调用（async=0）：出行分布（需先执行 trip_generation）
+    rpc trip_distribution (ParamsData) returns (ResultData) {}
+    // 流式调用（async=1）
+    rpc trip_distribution_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 同步调用（async=0）：出行生成 + 出行分布串联全流程
+    rpc trip_model_all (ParamsData) returns (ResultData) {}
+    // 流式调用（async=1）
+    rpc trip_model_all_stream (ParamsData) returns (stream ProgressData) {}
+}
+
+// 统一请求消息（与所有 TNA gRPC 算法保持一致，字段 tag 不可修改）
+message ParamsData {
+    int32  project_id  = 1;  // 项目ID（必填）
+    int32  user_id     = 2;
+    int32  case_id     = 3;  // 方案ID（必填）
+    int32  async       = 4;  // 请求模式：0=同步, 1=流式
+    string result_type = 5;  // 结果类型：log / list / rendering
+    string type        = 6;  // 预留
+    string param1      = 7;  // libpq 连接串；空串表示服务端使用 /opt/algorithms/db.conf
+    string param2      = 8;  // 扩展参数（JSON 字符串，见文档）
+}
+
+// 统一响应消息
+message ResultData {
+    int32  code    = 1;  // 状态码：1=成功, -1=参数缺失, -2=数据加载失败, -99=异常
+    string message = 2;  // 描述信息
+    string data    = 3;  // 结果摘要 JSON
+}
+
+// 流式进度帧
+message ProgressList {
+    int32  percent = 1;  // 进度百分比 0-100
+    int32  done    = 2;  // 是否完成：0=进行中, 1=已完成
+    string title   = 3;  // 进度描述（最后一帧携带结果 JSON）
+}
+
+message ProgressData {
+    int32        code    = 1;
+    string       message = 2;
+    ProgressList data    = 3;
+}
