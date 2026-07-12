@@ -1,0 +1,209 @@
+syntax = "proto3";
+
+package func;
+
+option cc_enable_arenas = true;
+
+message ResultTables {
+    map<string, string> items = 1;  // 统一约定放所有算法涉及的主要表名，如 network_table、od_table、trip_generation_table
+}
+
+message ResultCounts {
+    map<string, int64> items = 1;  // 统一约定放所有算法的主要整数结果，如 iter、pa_rows、od_rows、hist_od_rows
+}
+
+message ResultMetrics {
+    map<string, double> items = 1;  // 统一约定放所有算法的主要浮点指标，如 rmse、rgp 等
+}
+
+message ResultBody {
+    ResultTables  tables  = 1;  // 对应旧 JSON 的 data.tables；统一放主要表名
+    ResultCounts  counts  = 2;  // 对应旧 JSON 的 data.counts；统一放主要整数结果
+    ResultMetrics metrics = 3;  // 对应旧 JSON 的 data.metrics；统一放主要浮点指标
+}
+
+message ResultSummary {
+    string              stage      = 1;  // 统一放当前结果所属算法或阶段名，如 base_motor_network、tool_estimation
+    repeated string     logs       = 2;  // 统一放运行日志、告警与过程说明
+    map<string, string> attributes = 3;  // 统一放补充说明类字符串，不放主结果值
+    map<string, int64>  counts     = 4;  // 预留给摘要层补充整数统计；主结果整数优先放 data.counts
+    map<string, double> metrics    = 5;  // 预留给摘要层补充浮点统计；主结果浮点优先放 data.metrics
+}
+
+service FuncService {
+    // 机动车交通分配（严格不可达 OD；不可达时 code=-2 + 中文 message）— 主接口
+    rpc base_motor_network (ParamsData) returns (ResultData) {}
+    rpc base_motor_network_stream (ParamsData) returns (stream ProgressData) {}
+    // 旧版备份（兼容保留；与主接口同实现，仅 stage 名不同）
+    rpc base_motor_network_bak (ParamsData) returns (ResultData) {}
+    rpc base_motor_network_stream_bak (ParamsData) returns (stream ProgressData) {}
+    // 机动车交通分配 — 多质心连杆（link_osmid 去重；与 base_motor_network 同求解器）
+    rpc base_motor_network_multi_centroid (ParamsData) returns (ResultData) {}
+    rpc base_motor_network_multi_centroid_stream (ParamsData) returns (stream ProgressData) {}
+
+    rpc base_slow_network (ParamsData) returns (ResultData) {}
+    rpc base_slow_network_stream (ParamsData) returns (stream ProgressData) {}
+    // 慢行通行能力影响：计算 capacity_slow_adj 并回填 slow_road_way
+    rpc slow_capacity_adjustment (ParamsData) returns (ResultData) {}
+    rpc slow_capacity_adjustment_stream (ParamsData) returns (stream ProgressData) {}
+    // 慢行影响后分配：先计算 capacity_slow_adj，再临时替换 capacity 执行分配，结束后恢复原 capacity
+    rpc slow_capacity_assignment (ParamsData) returns (ResultData) {}
+    rpc slow_capacity_assignment_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 质心连杆独立服务（阶段1：先建链；分配/反推 param2 skip_centroid_prebuild=true 复用 type=10）
+    rpc build_centroid_connectors (ParamsData) returns (ResultData) {}
+    rpc build_centroid_connectors_stream (ParamsData) returns (stream ProgressData) {}
+
+    // OD 反推 — 工具前缀默认（multi_osm + other_observation；mainloop_maxiter=30 写死）
+    // OD 反推 — 多质心连杆（按 link_osmid 去重；与 tool_estimation_old 同 CLI）
+    rpc tool_estimation_multi_centroid (ParamsData) returns (ResultData) {}
+    rpc tool_estimation_stream_multi_centroid (ParamsData) returns (stream ProgressData) {}
+    // OD 反推 — 方案前缀 + other_observation（与 tool_estimation_old 同 CLI）
+    rpc tool_estimation_case (ParamsData) returns (ResultData) {}
+    rpc tool_estimation_stream_case (ParamsData) returns (stream ProgressData) {}
+    // OD 反推 — 本地 TNADriver 算法（工具前缀，忽略 case_id；读写 PG 同 tool_estimation）
+    rpc od_estimate_local (ParamsData) returns (ResultData) {}
+    rpc od_estimate_local_stream (ParamsData) returns (stream ProgressData) {}
+    // OD 反推 — 本地 TNADriver + 方案前缀 other_observation（须 case_id）
+    rpc tool_estimation (ParamsData) returns (ResultData) {}
+    rpc tool_estimation_stream (ParamsData) returns (stream ProgressData) {}
+
+    rpc tool_trip_generation (ParamsData) returns (ResultData) {}
+    rpc tool_trip_generation_stream (ParamsData) returns (stream ProgressData) {}
+
+    rpc tool_trip_distribution (ParamsData) returns (ResultData) {}
+    rpc tool_trip_distribution_stream (ParamsData) returns (stream ProgressData) {}
+
+    rpc tool_trip_model_all (ParamsData) returns (ResultData) {}
+    rpc tool_trip_model_all_stream (ParamsData) returns (stream ProgressData) {}
+
+    rpc base_transit_assignment (ParamsData) returns (ResultData) {}
+    rpc base_transit_assignment_stream (ParamsData) returns (stream ProgressData) {}
+    // 公交 AON 分配（推荐；helper transit_assignment_new_cli）
+    rpc base_transit_assignment_new (ParamsData) returns (ResultData) {}
+    rpc base_transit_assignment_new_stream (ParamsData) returns (stream ProgressData) {}
+    // ???????????? project{p}_user{u}_case{c}_pt_route/stop/shape/transit/trip?
+    // ? pt_shape.dir=2 ?? project{p}_user{u}_case{c}_pt_way?pt_way.dir ??? 1?
+
+    rpc diagnosis_pt_meso (ParamsData) returns (ResultData) {}
+    rpc diagnosis_pt_meso_stream (ParamsData) returns (stream ProgressData) {}
+
+    rpc diagnosis_pt_macro (ParamsData) returns (ResultData) {}
+    rpc diagnosis_pt_macro_stream (ParamsData) returns (stream ProgressData) {}
+
+    rpc diagnosis_road_macro (ParamsData) returns (ResultData) {}
+    rpc diagnosis_road_macro_stream (ParamsData) returns (stream ProgressData) {}
+
+    rpc diagnosis_road_micro (ParamsData) returns (ResultData) {}
+    rpc diagnosis_road_micro_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 机动车 OD 溯源：给定目标路段，统计经该路段的路径流及 OD 贡献（对齐 ODTrace/4511_path_od_contributions.csv）
+    // param2: link_id(必填), top_n, min_share_pct, include_path_geometry, include_map_bundle, output_path
+    // 前置：base_motor_network 已分配且 road_way.volume 有效；方案前缀 project{p}_user{u}_case{c}_
+    rpc od_trace (ParamsData) returns (ResultData) {}
+    rpc od_trace_stream (ParamsData) returns (stream ProgressData) {}
+
+    rpc diagnosis_slow_macro (ParamsData) returns (ResultData) {}
+    rpc diagnosis_slow_macro_stream (ParamsData) returns (stream ProgressData) {}
+
+    rpc diagnosis_slow_meso_micro (ParamsData) returns (ResultData) {}
+    rpc diagnosis_slow_meso_micro_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 报告生成与导出工具（任务1：承载力报告；任务2：仿真流量 Flow.csv；任务3：仿真路网 OSM）
+    // param1 可选传入 business_type（默认 carrying_capacity）
+    rpc report_export (ParamsData) returns (ResultData) {}
+    rpc report_export_stream (ParamsData) returns (stream ProgressData) {}
+
+    rpc flow_export (ParamsData) returns (ResultData) {}
+    rpc flow_export_stream (ParamsData) returns (stream ProgressData) {}
+
+    rpc sim_network_export (ParamsData) returns (ResultData) {}
+    rpc sim_network_export_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 方案评审（分配 + 宏观诊断 串联执行，流式进度覆盖两阶段整体 0-100%）
+    // 机动车：base_motor_network(0-55%) → diagnosis_road_macro(55-100%)
+    rpc review_road (ParamsData) returns (ResultData) {}
+    rpc review_road_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 慢行：base_slow_network(0-55%) → diagnosis_slow_macro(55-100%)
+    rpc review_slow (ParamsData) returns (ResultData) {}
+    rpc review_slow_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 公交：base_transit_assignment(0-55%) → diagnosis_pt_macro(55-100%)
+    rpc review_pt (ParamsData) returns (ResultData) {}
+    rpc review_pt_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 基础数据分析报告：读取机动车/慢行/公交/TAZ数据，计算统计指标，生成 HTML 可视化报告
+    // param2 可选：output_path；project_name（项目名，仅 param2）；include_html_content（默认 true）→ summary.attributes.content 含 HTML 正文；html_path 同 attributes
+    rpc base_data_report (ParamsData) returns (ResultData) {}
+    rpc base_data_report_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 成本效益分析报告：在基础数据/现状数据基础上做改造分配后，对比评估改造效益
+    // param2 JSON 字段：
+    //   type         string  必填，改造类型: "motor"（道路）/ "slow"（慢行）/ "pt"（公交）
+    //   base_case_id int     可选，现状方案 case_id；与 case_id 不同则前后对比；未传或相同则仅单方案评估
+    //   project_name string  可选，项目名称（仅 param2）；缺省 output_path 时用于文件名前缀与页眉
+    //   output_path  string  可选，HTML 输出路径；缺省 /tmp/tna_cba_report_{pid}_{uid}_{cid}.html
+    rpc cost_benefit_report (ParamsData) returns (ResultData) {}
+    rpc cost_benefit_report_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 方案对比分析报告：基础方案 vs 改造方案，多维度（机动车/慢行/公交）对比，ECharts HTML 报告
+    // param2 JSON 字段：
+    //   base_case_id  int     必填，现状/基础方案 case_id
+    //   type          string  可选，对比类型: "motor"/"slow"/"pt"/"all"（默认 "all"）
+    //   project_name  string  可选，项目名称（仅 param2）；缺省 output_path 时用于文件名前缀与页眉
+    //   output_path   string  可选，HTML 输出路径；缺省 /tmp/tna_compare_report_{pid}_{uid}_cases_{ids}.html
+    rpc scheme_compare_report (ParamsData) returns (ResultData) {}
+    rpc scheme_compare_report_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 基础方案诊断指标报告。详见 docs/基础方案诊断指标报告-接口说明.md
+    // ParamsData：project_id/user_id/case_id(>=0，基础方案真实 ID) 必填；param2 JSON 见文档 §1.2
+    //   type: motor|slow|pt|all（默认 all，按 indicator_code 前缀筛子系统）
+    //   scope: macro|meso_micro|all（默认 all，宏观+中微观）
+    //   output_path, project_name（仅 param2）, include_html_content（默认 true）
+    rpc base_scheme_diagnosis_report (ParamsData) returns (ResultData) {}
+    rpc base_scheme_diagnosis_report_stream (ParamsData) returns (stream ProgressData) {}
+
+    // 普通/改造方案诊断指标报告（case_id>=0，规则同基础方案报告）。详见 docs/普通方案诊断指标报告-接口说明.md
+    // param2 在基础方案字段之外还支持：
+    //   base_case_id int — 改扩建对比用的基础方案 ID；renovation_summary object — 预留展示用摘要
+    //   project_name string — 项目名称（仅 param2）；缺省 output_path 时用于文件名前缀与页眉
+    rpc scheme_diagnosis_report (ParamsData) returns (ResultData) {}
+    rpc scheme_diagnosis_report_stream (ParamsData) returns (stream ProgressData) {}
+
+    // OSM Tool 管理（启停/查状态）：project_id/user_id 必填，param2 可选传 {"port":8000}
+}
+
+// 统一请求消息
+message ParamsData {
+    int32  project_id  = 1;  // 项目ID（必填）
+    int32  user_id     = 2;  // 用户ID（必填）
+    int32  case_id     = 3;  // 方案ID（可选，<=0 视为未提供）
+    int32  async       = 4;  // 请求模式：0=同步, 1=流式
+    string result_type = 5;  // 结果类型：log / list / rendering
+    string type        = 6;  // 预留
+    string param1      = 7;  // libpq 连接串；空串表示服务端使用 /opt/algorithms/db.conf
+    string param2      = 8;  // 扩展参数（JSON 字符串）
+}
+
+// 统一响应消息
+message ResultData {
+    int32         code    = 1;  // 状态码：1=成功, -1=参数缺失, -2=数据加载失败, -99=异常
+    string        message = 2;  // 描述信息或错误信息
+    ResultBody    data    = 3;  // 主体结果：表名、计数、指标
+    ResultSummary summary = 4;  // 摘要信息：阶段、日志、补充统计
+}
+
+// 流式进度帧
+message ProgressList {
+    int32  percent = 1;  // 进度百分比 0-100
+    int32  done    = 2;  // 是否完成：0=进行中, 1=已完成
+    string title   = 3;  // 进度描述
+}
+
+message ProgressData {
+    int32        code    = 1;
+    string       message = 2;
+    ProgressList data    = 3;
+    ResultData   result  = 4;  // 完成帧携带的完整结果；字段语义与同步接口返回的 ResultData 一致
+}

@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>机动车 OD 溯源 · 交互地图</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+:root { --ink:#1a2332; --muted:#5c6773; --line:#d9dee7; --bg:#eef1f5; --accent:#2e74b5; }
+* { box-sizing:border-box; }
+body { margin:0; font-family:"Segoe UI","Microsoft YaHei",sans-serif; color:var(--ink); background:var(--bg); }
+header { background:linear-gradient(135deg,#1f4d78,#2e74b5); color:#fff; padding:16px 20px; }
+header h1 { margin:0 0 6px; font-size:1.25rem; }
+header p { margin:2px 0; font-size:.86rem; opacity:.92; }
+.layout { display:grid; grid-template-columns:minmax(340px,420px) 1fr; min-height:calc(100vh - 96px); }
+.sidebar { background:#fff; border-right:1px solid var(--line); overflow:auto; max-height:calc(100vh - 96px); }
+.mapbox { min-height:400px; height:calc(100vh - 96px); position:relative; }
+#map { width:100%; height:100%; }
+.panel { padding:14px 16px; border-bottom:1px solid var(--line); }
+.panel h2 { margin:0 0 8px; font-size:1rem; color:#1f4d78; }
+.note { font-size:.8rem; color:var(--muted); margin:6px 0; }
+.stats { display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:.82rem; margin-bottom:8px; }
+.stats div { background:#f7f9fc; padding:8px; border-radius:6px; }
+.seg-list { list-style:none; margin:0; padding:0; max-height:280px; overflow:auto; }
+.seg-item { padding:10px 14px; border-bottom:1px solid var(--line); cursor:pointer; font-size:.84rem; }
+.seg-item:hover { background:#f0f6ff; }
+.seg-item.active { background:#dbeafe; border-left:4px solid var(--accent); }
+.seg-item .t { font-weight:600; }
+.seg-item .m { color:var(--muted); font-size:.78rem; margin-top:4px; }
+.badge { display:inline-block; color:#fff; padding:1px 7px; border-radius:4px; font-size:.72rem; margin-right:4px; }
+.badge-vc { background:#e65100; }
+.badge-od { background:#1565c0; }
+table { width:100%; border-collapse:collapse; font-size:.78rem; }
+th, td { border:1px solid var(--line); padding:5px 6px; text-align:left; }
+th { background:#eef2f7; position:sticky; top:0; }
+tr.od-row { cursor:pointer; }
+tr.od-row:hover { background:#fff8e1; }
+tr.od-row.selected { background:#ffe082; }
+.path-detail { font-size:.78rem; background:#fafafa; border:1px solid var(--line); border-radius:6px; padding:8px; margin-top:8px; max-height:160px; overflow:auto; }
+.path-detail table { font-size:.72rem; }
+.zone-pin-label {
+  background:rgba(106,27,154,0.95); color:#fff; border:2px solid #ffeb3b; border-radius:50%;
+  width:28px; height:28px; line-height:24px; text-align:center; font-size:11px; font-weight:700;
+  box-shadow:0 2px 6px rgba(0,0,0,.35);
+}
+.od-flow-label {
+  background:rgba(255,255,255,0.95); border:2px solid #1565c0; border-radius:6px;
+  padding:4px 8px; font-size:11px; font-weight:700; line-height:1.3; text-align:center;
+  box-shadow:0 2px 6px rgba(0,0,0,.25); white-space:nowrap;
+}
+.legend { padding:8px 12px; font-size:.78rem; background:#fff; border-radius:6px; box-shadow:0 1px 4px rgba(0,0,0,.15); line-height:1.5; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="hdr-title">机动车 OD 路径溯源</h1>
+  <p id="hdr-sub">—</p>
+  <p id="hdr-unit">—</p>
+</header>
+<div class="layout">
+  <div class="sidebar">
+    <div class="panel">
+      <h2>地图图层</h2>
+      <label><input type="checkbox" id="chk-network" checked onchange="syncLayers()"> 全路网（<span id="net-count">—</span> 段，按 v/c 着色）</label><br/>
+      <label><input type="checkbox" id="chk-saturated" checked onchange="syncLayers()"> 饱和路段 v/c≥0.8（<span id="sat-count">—</span> 段）</label><br/>
+      <label><input type="checkbox" id="chk-target" checked onchange="syncLayers()"> 当前选中路段（粗红）</label><br/>
+      <label><input type="checkbox" id="chk-zone-poly" onchange="syncLayers()"> 交通小区面</label><br/>
+      <label><input type="checkbox" id="chk-zones" checked onchange="syncLayers()"> 小区质心</label><br/>
+      <label><input type="checkbox" id="chk-zone-labels" checked onchange="syncLayers()"> 小区 ID 标签</label><br/>
+      <label><input type="checkbox" id="chk-connectors" onchange="syncLayers()"> 质心连杆（每小区 1 条 · 库内 <span id="conn-count">—</span> 条）</label><br/>
+      <label><input type="checkbox" id="chk-desire" checked onchange="syncLayers()"> 期望线（OD 起终点直线）</label><br/>
+      <label><input type="checkbox" id="chk-paths" checked onchange="syncLayers()"> OD 路径（选中行）</label><br/>
+      <label><input type="checkbox" id="chk-path-connectors" onchange="selectOd(activeOdIndex)"> 路径中含质心连杆（粉虚线）</label><br/>
+      <p class="note">库内 type=10 连杆可能因多次「生成质心连杆」累积重复；地图仅展示每小区 1 条代表连杆。全路网 7182 段<strong>不含</strong>连杆。</p>
+      <label><input type="checkbox" id="chk-path-labels" checked onchange="syncLayers()"> 路径流量标签</label><br/>
+      <label><input type="checkbox" id="chk-link-popups" onchange="syncLayers()"> 路径逐段 link 标注</label>
+    </div>
+    <div class="panel">
+      <h2>饱和路段列表</h2>
+      <p class="note">点击路段 → 右侧地图定位；再点 OD 行显示路径</p>
+      <ul class="seg-list" id="seg-list"></ul>
+    </div>
+    <div class="panel" id="detail-panel">
+      <h2>路段与 OD 贡献</h2>
+      <div class="stats" id="seg-stats"></div>
+      <div id="seg-summary"></div>
+      <table id="od-table"><thead><tr>
+        <th>OD</th><th>路径流量</th><th>占比%</th><th>行程(min)</th><th>自由流(min)</th>
+      </tr></thead><tbody></tbody></table>
+      <div id="path-detail" class="path-detail" style="display:none"></div>
+    </div>
+  </div>
+  <div class="mapbox"><div id="map"></div></div>
+</div>
+<script src="__DATA_JS__"></script>
+<script>
+let DATA = null;
+let map, networkLayer, saturatedLayer, targetLayer, zonePolyLayer, zoneLayer, zoneLabelLayer;
+let connectorLayer, desireLayer, pathLayer, pathLabelLayer, hopLayer, odHlLayer;
+let activeSeg = null, activeOd = null, activeOdIndex = null;
+const OD_COLORS = ['#6a1b9a','#00838f','#558b2f','#f57c00','#c62828','#1565c0','#5d4037','#4527a0'];
+
+function fmt(v, d=1) {
+  if (v == null || v === '') return '—';
+  const n = Number(v);
+  if (Number.isNaN(n)) return String(v);
+  return (Math.round(n * Math.pow(10,d)) / Math.pow(10,d)).toLocaleString();
+}
+
+function linkPopup(lk) {
+  return '<b>link ' + lk.link_id + '</b> ' + (lk.name || '') +
+    '<br/>类型 ' + (lk.type_label || '—') +
+    '<br/>流量 <b>' + fmt(lk.volume) + '</b> · 容量 ' + fmt(lk.capacity) +
+    '<br/>v/c <b>' + fmt(lk.v_c, 2) + '</b>' +
+    '<br/>自由流 ' + fmt(lk.fft_min) + ' min · 行程 ' + fmt(lk.travel_min) + ' min';
+}
+
+function initHeader() {
+  const m = DATA.meta || {};
+  const s = m.summary || {};
+  document.getElementById('hdr-title').textContent =
+    '机动车 OD 路径溯源 · 饱和度≥' + (s.min_v_c ?? 0.8);
+  document.getElementById('hdr-sub').textContent =
+    (m.run && m.run.label ? m.run.label + ' · ' : '') +
+    '溯源路段 ' + (s.segment_count || 0) + ' / 饱和 ' + (s.saturated_link_total || s.saturated_link_count || 0) +
+    ' · 小区 ' + (s.zone_count || 0) + ' · 算法 ' + (s.method || 'aon_shortest_path');
+  document.getElementById('hdr-unit').textContent =
+    '量纲：' + (s.flow_unit || 'pcu/h') + ' · ' + (s.flow_unit_note || '');
+  document.getElementById('net-count').textContent = s.network_link_count || (DATA.network_links || []).length;
+  document.getElementById('sat-count').textContent = s.saturated_link_count || 0;
+  const connEl = document.getElementById('conn-count');
+  if (connEl) {
+    const total = s.centroid_connector_total_in_db || s.centroid_connector_count || 0;
+    const shown = (DATA.centroid_connectors || []).length;
+    connEl.textContent = total + (shown && total > shown ? '，展示' + shown : '');
+  }
+}
+
+function setupPanes() {
+  ['networkPane','satPane','targetPane','zonePane','pathPane','labelPane'].forEach((name, i) => {
+    if (!map.getPane(name)) {
+      map.createPane(name);
+      map.getPane(name).style.zIndex = 350 + i * 50;
+    }
+  });
+  if (map.getPane('labelPane')) map.getPane('labelPane').style.pointerEvents = 'none';
+}
+
+function initMap() {
+  activeSeg = (DATA.segments || [])[0] || null;
+  const allCoords = (DATA.segments || []).flatMap(s => s.line_coords || []);
+  const netCoords = (DATA.network_links || []).slice(0, 50).flatMap(l => l.line_coords || []);
+  const coords = allCoords.length ? allCoords : netCoords;
+  const center = coords.length ? coords[Math.floor(coords.length / 2)] : [22.54, 114.05];
+  map = L.map('map').setView(center, 13);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18, attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+  setupPanes();
+
+  networkLayer = L.layerGroup();
+  saturatedLayer = L.layerGroup();
+  targetLayer = L.layerGroup();
+  zonePolyLayer = L.layerGroup();
+  zoneLayer = L.layerGroup();
+  zoneLabelLayer = L.layerGroup();
+  connectorLayer = L.layerGroup();
+  desireLayer = L.layerGroup();
+  pathLayer = L.layerGroup();
+  pathLabelLayer = L.layerGroup();
+  hopLayer = L.layerGroup();
+  odHlLayer = L.layerGroup();
+
+  (DATA.network_links || []).forEach(lk => {
+    if (!lk.line_coords || lk.line_coords.length < 2) return;
+    const w = lk.saturated ? 4 : 3;
+    const op = lk.saturated ? 0.85 : 0.65;
+    L.polyline(lk.line_coords, {
+      color: lk.color || '#78909c', weight: w, opacity: op, pane: 'networkPane'
+    }).bindPopup(linkPopup(lk)).addTo(networkLayer);
+  });
+
+  (DATA.network_links || []).filter(lk => lk.saturated).forEach(lk => {
+    if (!lk.line_coords || lk.line_coords.length < 2) return;
+    L.polyline(lk.line_coords, {
+      color: lk.color || '#f9a825', weight: 6, opacity: 0.9, pane: 'satPane'
+    }).bindPopup(linkPopup(lk)).addTo(saturatedLayer);
+  });
+
+  (DATA.zones || []).forEach(z => {
+    (z.polygons || []).forEach(ring => {
+      if (ring.length < 3) return;
+      L.polygon(ring, {
+        color: '#7b1fa2', weight: 1, fillColor: '#ce93d8', fillOpacity: 0.15, pane: 'zonePane'
+      }).bindTooltip(z.label + ' · ' + (z.name || '')).addTo(zonePolyLayer);
+    });
+    if (z.latlng) {
+      L.circleMarker(z.latlng, {
+        radius: 7, color: '#6a1b9a', fillColor: '#ce93d8', fillOpacity: 0.9, pane: 'zonePane'
+      }).bindTooltip(z.label + '<br/>pg_id=' + z.pg_id).addTo(zoneLayer);
+      L.marker(z.latlng, {
+        icon: L.divIcon({className:'', html:'<div class="zone-pin-label">' + (z.zone_id || '?') + '</div>', iconSize:[28,28], iconAnchor:[14,14]}),
+        pane: 'labelPane', interactive: false
+      }).addTo(zoneLabelLayer);
+    }
+  });
+
+  (DATA.centroid_connectors || []).forEach(c => {
+    if (!c.coords || c.coords.length < 2) return;
+    L.polyline(c.coords, {color:'#e91e63', weight:2, opacity:0.75, dashArray:'4,4', pane:'zonePane'})
+      .bindTooltip((c.zone_label || '') + ' · link ' + c.link_id).addTo(connectorLayer);
+  });
+
+  renderSegList();
+  selectSeg(activeSeg ? activeSeg.link_id : null, false);
+
+  const legend = L.control({position:'bottomright'});
+  legend.onAdd = () => {
+    const d = L.DomUtil.create('div', 'legend');
+    d.innerHTML = '<b>v/c 着色</b><br/>' +
+      '<span style="color:#78909c">━</span> &lt;0.6 · ' +
+      '<span style="color:#7cb342">━</span> 0.6–0.8 · ' +
+      '<span style="color:#f9a825">━</span> 0.8–1.0 · ' +
+      '<span style="color:#e65100">━</span> 1.0–1.2 · ' +
+      '<span style="color:#b71c1c">━</span> ≥1.2<br/>' +
+      '粗红=选中路段 · 彩线=道路路径 · 粉虚=质心连杆 · 蓝虚=期望线';
+    return d;
+  };
+  legend.addTo(map);
+  syncLayers();
+}
+
+function renderSegList() {
+  const ul = document.getElementById('seg-list');
+  if (!ul) return;
+  ul.innerHTML = '';
+  (DATA.segments || []).forEach(seg => {
+    const li = document.createElement('li');
+    li.className = 'seg-item' + (activeSeg && activeSeg.link_id === seg.link_id ? ' active' : '');
+    const vc = seg.v_c != null ? fmt(seg.v_c, 2) : '—';
+    li.innerHTML = '<div class="t">' + (seg.label || 'link ' + seg.link_id) + '</div>' +
+      '<div class="m"><span class="badge badge-vc">v/c ' + vc + '</span>' +
+      '<span class="badge badge-od">' + (seg.all_path_ods || []).length + ' OD</span> ' +
+      '分配 ' + fmt(seg.assigned) + ' · 路径流 ' + fmt(seg.path_flow_sum) + '</div>';
+    li.onclick = () => selectSeg(seg.link_id, true);
+    ul.appendChild(li);
+  });
+}
+
+function selectSeg(linkId, fit) {
+  activeSeg = (DATA.segments || []).find(s => s.link_id === linkId) || (DATA.segments || [])[0] || null;
+  activeOd = null;
+  targetLayer.clearLayers();
+  pathLayer.clearLayers();
+  desireLayer.clearLayers();
+  pathLabelLayer.clearLayers();
+  hopLayer.clearLayers();
+  odHlLayer.clearLayers();
+
+  document.querySelectorAll('.seg-item').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.seg-item').forEach((el, i) => {
+    const seg = (DATA.segments || [])[i];
+    if (seg && activeSeg && seg.link_id === activeSeg.link_id) el.classList.add('active');
+  });
+
+  if (activeSeg && activeSeg.line_coords && activeSeg.line_coords.length >= 2) {
+    L.polyline(activeSeg.line_coords, {color:'#d32f2f', weight:10, opacity:0.95, pane:'targetPane'})
+      .bindPopup('<b>' + activeSeg.label + '</b><br/>link ' + activeSeg.link_id +
+        '<br/>分配 <b>' + fmt(activeSeg.assigned) + '</b> · 容量 ' + fmt(activeSeg.capacity) +
+        '<br/>v/c <b>' + fmt(activeSeg.v_c, 2) + '</b><br/>路径流合计 ' + fmt(activeSeg.path_flow_sum))
+      .addTo(targetLayer);
+    if (fit) map.fitBounds(L.polyline(activeSeg.line_coords).getBounds(), {padding:[50,50], maxZoom:15});
+  }
+
+  renderSummary();
+  renderOdTable();
+  syncLayers();
+}
+
+function renderSummary() {
+  const stats = document.getElementById('seg-stats');
+  const el = document.getElementById('seg-summary');
+  if (!activeSeg) {
+    if (stats) stats.innerHTML = '';
+    if (el) el.innerHTML = '<p class="note">无路段数据</p>';
+    return;
+  }
+  if (stats) {
+    stats.innerHTML =
+      '<div>分配流量<br/><b>' + fmt(activeSeg.assigned) + '</b></div>' +
+      '<div>容量<br/><b>' + fmt(activeSeg.capacity) + '</b></div>' +
+      '<div>v/c<br/><b>' + fmt(activeSeg.v_c, 2) + '</b></div>' +
+      '<div>路径流合计<br/><b>' + fmt(activeSeg.path_flow_sum) + '</b></div>';
+  }
+  if (el) {
+    el.innerHTML = '<p><b>' + activeSeg.label + '</b> · link <b>' + activeSeg.link_id + '</b><br/>' +
+      '经该路段 OD 对：<b>' + (activeSeg.all_path_ods || []).length + '</b></p>';
+  }
+}
+
+function renderOdTable() {
+  const tb = document.querySelector('#od-table tbody');
+  const pd = document.getElementById('path-detail');
+  if (!tb) return;
+  tb.innerHTML = '';
+  if (pd) { pd.style.display = 'none'; pd.innerHTML = ''; }
+  (activeSeg?.all_path_ods || []).forEach((o, j) => {
+    const tr = document.createElement('tr');
+    tr.className = 'od-row';
+    tr.innerHTML = '<td><b>' + o.origin + '→' + o.dest + '</b></td><td>' + fmt(o.path_flow) +
+      '</td><td>' + o.share_pct + '%</td><td>' + fmt(o.path_travel_time_min) +
+      '</td><td>' + fmt(o.path_free_flow_min) + '</td>';
+    tr.onclick = () => selectOd(j);
+    tb.appendChild(tr);
+  });
+}
+
+function zoneByOd(o) {
+  const oz = (DATA.zones || []).find(z => z.pg_id === o.origin_id || z.label === o.origin);
+  const dz = (DATA.zones || []).find(z => z.pg_id === o.dest_id || z.label === o.dest);
+  return { oz, dz };
+}
+
+function drawPathPolylines(p, color) {
+  const segs = p.path_segments || [];
+  const showConn = document.getElementById('chk-path-connectors')?.checked;
+  const boundsLayers = [];
+  if (segs.length) {
+    segs.forEach(seg => {
+      if (seg.is_connector && !showConn) return;
+      if (!seg.coords || seg.coords.length < 2) return;
+      const style = seg.is_connector
+        ? {color:'#e91e63', weight:4, dashArray:'8,6', opacity:0.8}
+        : {color: color, weight:6, opacity:0.88};
+      const tip = seg.is_connector
+        ? '质心连杆 type=10 · links ' + (seg.link_ids || []).join(',')
+        : '道路路径 · links ' + (seg.link_ids || []).join(',');
+      const pl = L.polyline(seg.coords, Object.assign({pane:'pathPane'}, style))
+        .bindTooltip(tip).addTo(pathLayer);
+      boundsLayers.push(pl);
+    });
+  } else if (p.path_coords && p.path_coords.length >= 2) {
+    const pl = L.polyline(p.path_coords, {color: color, weight:6, opacity:0.88, pane:'pathPane'}).addTo(pathLayer);
+    boundsLayers.push(pl);
+  }
+  return boundsLayers;
+}
+
+function selectOd(j) {
+  const rows = activeSeg?.all_path_ods || [];
+  activeOd = rows[j];
+  activeOdIndex = j;
+  if (!activeOd) return;
+
+  pathLayer.clearLayers();
+  desireLayer.clearLayers();
+  pathLabelLayer.clearLayers();
+  hopLayer.clearLayers();
+  odHlLayer.clearLayers();
+
+  document.querySelectorAll('#od-table tr.od-row').forEach((tr, k) => tr.classList.toggle('selected', k === j));
+
+  const { oz, dz } = zoneByOd(activeOd);
+  const color = OD_COLORS[j % OD_COLORS.length];
+
+  if (oz && oz.latlng) {
+    L.circleMarker(oz.latlng, {radius:11, color:'#1565c0', fillColor:'#42a5f5', fillOpacity:1, weight:3})
+      .bindTooltip('起点 ' + activeOd.origin + '<br/>流量 ' + fmt(activeOd.path_flow)).addTo(odHlLayer);
+  }
+  if (dz && dz.latlng) {
+    L.circleMarker(dz.latlng, {radius:11, color:'#2e7d32', fillColor:'#66bb6a', fillOpacity:1, weight:3})
+      .bindTooltip('终点 ' + activeOd.dest + '<br/>流量 ' + fmt(activeOd.path_flow)).addTo(odHlLayer);
+  }
+  if (oz && dz && oz.latlng && dz.latlng) {
+    L.polyline([oz.latlng, dz.latlng], {color:'#1565c0', weight:2, dashArray:'10,8', opacity:0.55})
+      .bindTooltip('期望线 ' + activeOd.origin + '→' + activeOd.dest).addTo(desireLayer);
+    const mid = [(oz.latlng[0]+dz.latlng[0])/2, (oz.latlng[1]+dz.latlng[1])/2];
+    L.marker(mid, {
+      icon: L.divIcon({
+        className:'', html:'<div class="od-flow-label">' + activeOd.origin + '→' + activeOd.dest +
+          '<br/>' + fmt(activeOd.path_flow) + ' pcu/h · ' + fmt(activeOd.share_pct,1) + '%</div>',
+        iconSize:[120,40], iconAnchor:[60,20]
+      }), pane:'labelPane', interactive:false
+    }).addTo(pathLabelLayer);
+  }
+
+  const paths = activeOd.paths || [];
+  let fitBounds = null;
+  paths.forEach((p, k) => {
+    const layers = drawPathPolylines(p, color);
+    if (k === 0 && layers.length) {
+      fitBounds = L.featureGroup(layers).getBounds();
+    }
+  });
+  if (fitBounds) map.fitBounds(fitBounds, {padding:[60,60], maxZoom:15});
+
+  const pd = document.getElementById('path-detail');
+  const details = (activeOd.paths && activeOd.paths[0] && activeOd.paths[0].path_links_detail) ||
+    (activeOd.paths && activeOd.paths[0] && activeOd.paths[0].path_links) || [];
+  if (pd && details.length) {
+    pd.style.display = 'block';
+    let html = '<b>路径逐段</b>（' + details.length + ' 段）<table><tr><th>link</th><th>流量</th><th>容量</th><th>v/c</th><th>行程min</th></tr>';
+    details.forEach(lk => {
+      html += '<tr><td>' + lk.link_id + '</td><td>' + fmt(lk.volume) + '</td><td>' + fmt(lk.capacity) +
+        '</td><td>' + fmt(lk.v_c,2) + '</td><td>' + fmt(lk.travel_min) + '</td></tr>';
+    });
+    html += '</table>';
+    pd.innerHTML = html;
+  }
+
+  if (document.getElementById('chk-link-popups')?.checked) {
+    details.forEach((lk, idx) => {
+      const seg = lk.line_coords;
+      if (!seg || seg.length < 2) return;
+      const mid = seg[Math.floor(seg.length/2)];
+      L.marker(mid, {
+        icon: L.divIcon({
+          className:'', html:'<div class="od-flow-label" style="border-color:'+color+';font-size:9px">' +
+            (idx+1) + '. ' + lk.link_id + '<br/>' + fmt(lk.travel_min) + 'min</div>',
+          iconSize:[60,30], iconAnchor:[30,15]
+        }), pane:'labelPane', interactive:false
+      }).addTo(hopLayer);
+    });
+  }
+  syncLayers();
+}
+
+function syncLayers() {
+  const on = (id) => document.getElementById(id)?.checked;
+  const toggle = (layer, chk) => {
+    if (!layer || !map) return;
+    if (chk) { if (!map.hasLayer(layer)) layer.addTo(map); }
+    else map.removeLayer(layer);
+  };
+  toggle(networkLayer, on('chk-network'));
+  toggle(saturatedLayer, on('chk-saturated'));
+  toggle(targetLayer, on('chk-target'));
+  toggle(zonePolyLayer, on('chk-zone-poly'));
+  toggle(zoneLayer, on('chk-zones'));
+  toggle(zoneLabelLayer, on('chk-zone-labels'));
+  toggle(connectorLayer, on('chk-connectors'));
+  toggle(desireLayer, on('chk-desire'));
+  toggle(pathLayer, on('chk-paths'));
+  toggle(pathLabelLayer, on('chk-path-labels'));
+  toggle(hopLayer, on('chk-link-popups'));
+  if (odHlLayer) odHlLayer.addTo(map);
+}
+
+(function boot() {
+  if (!window.TRACE_MAP_DATA) {
+    document.body.innerHTML = '<p style="padding:20px">数据脚本未加载</p>';
+    return;
+  }
+  DATA = window.TRACE_MAP_DATA;
+  initHeader();
+  initMap();
+})();
+</script>
+</body>
+</html>
